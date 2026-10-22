@@ -43,18 +43,16 @@ end
 
 -- ============================================================ state
 
-local VERSION = "1.1.0"
+local VERSION = "1.1.1"
 local SETUP_FILE = "/lava_plant.cfg"
 local BATCH = 100 -- CC drops events past 256 queued, so never wait on more at once
 
-local TYPES = {
-  basin = "create:basin",
-  burner = "createpropulsion:liquid_burner",
-  generator = "createcobblestone:mechanical_generator",
-  thruster = "thruster",
-}
-local TANK_TYPES = {
-  "create:fluid_tank", "createpropulsion:platinum_fluid_vessel", "create:hose_pulley",
+-- CC names most blocks after their block entity id, which some mods end in
+-- "_block_entity", so these match any peripheral type containing the text.
+local KINDS = {
+  { list = "basins", match = "basin" },
+  { list = "burners", match = "liquid_burner" },
+  { list = "generators", match = "mechanical_generator" },
 }
 
 local roles = { lava = nil }
@@ -114,29 +112,45 @@ local function lavaTank() return present(roles.lava) and roles.lava or nil end
 
 -- ============================================================ peripherals
 
+local function typeContains(name, text)
+  for _, ty in ipairs({ peripheral.getType(name) }) do
+    if type(ty) == "string" and ty:find(text, 1, true) then return true end
+  end
+  return false
+end
+
+-- Which list a peripheral belongs in, or nil.
+local function kindOf(name)
+  if peripheral.hasType(name, "thruster") then return "thrusters" end
+  for _, k in ipairs(KINDS) do
+    if typeContains(name, k.match) then return k.list end
+  end
+  return nil
+end
+
 local function scan()
   local seen = {}
   local f = { basins = {}, burners = {}, generators = {}, thrusters = {} }
   for _, name in ipairs(peripheral.getNames()) do
     if not seen[name] then
       seen[name] = true
-      if peripheral.hasType(name, TYPES.basin) then table.insert(f.basins, name)
-      elseif peripheral.hasType(name, TYPES.burner) then table.insert(f.burners, name)
-      elseif peripheral.hasType(name, TYPES.generator) then table.insert(f.generators, name)
-      elseif peripheral.hasType(name, TYPES.thruster) then table.insert(f.thrusters, name) end
+      local kind = kindOf(name)
+      if kind then table.insert(f[kind], name) end
     end
   end
   for _, list in pairs(f) do table.sort(list) end
   found = f
 end
 
+-- Anything that holds fluid and isn't a basin, burner or thruster
+-- (fluid tanks, Platinum Fluid Vessels, hose pulleys...).
 local function tankCandidates()
   local seen, out = {}, {}
   for _, name in ipairs(peripheral.getNames()) do
     if not seen[name] then
       seen[name] = true
-      for _, ty in ipairs(TANK_TYPES) do
-        if peripheral.hasType(name, ty) then table.insert(out, name) break end
+      if peripheral.hasType(name, "fluid_storage") and not kindOf(name) then
+        table.insert(out, name)
       end
     end
   end
