@@ -1,23 +1,19 @@
--- Lava Plant: runs a superheated-mixer lava farm, the thrusters it fuels and
--- the steam boilers next to it, from one computer.
+-- Lava Plant: runs a superheated-mixer lava farm and the thrusters and
+-- liquid burners it fuels, from one computer.
 --
 --   * pushes cobblestone from Mechanical Generators into every basin
 --   * drains lava out of every basin into your lava tank
 --   * tops up every Create Propulsion thruster from the lava tank
 --   * feeds lava to every Liquid Burner (the end burner of a line is enough)
---   * pushes water into each boiler in 1000 mB bursts (keeps water at 18)
 --
 -- Put a wired modem on every block you want it to run and join them all
--- with network cable. On first start it asks which fluid tank is which.
--- Press S at any time to run that setup again.
+-- with network cable. On first start it asks which fluid tank holds the
+-- lava. Press S at any time to run that setup again.
 
--- Fluid tanks. Leave as nil to pick them on the setup screen instead.
+-- The lava tank. Leave as nil to pick it on the setup screen instead.
 LAVA_TANK = nil           -- e.g. "create:fluid_tank_0"
-WATER_SOURCE = nil        -- tank or hose pulley the boilers get water from
-BOILERS = nil             -- e.g. { "create:fluid_tank_3" }
 
 LAVA = "minecraft:lava"
-WATER = "minecraft:water"
 COBBLE = "minecraft:cobblestone"
 
 FARM_SECONDS = 0.5        -- how often basins are drained
@@ -25,8 +21,6 @@ COBBLE_SECONDS = 3        -- how often basins are refilled with cobble
 THRUSTER_SECONDS = 0.25   -- how often thrusters are topped up
 BURNER_SECONDS = 2        -- how often burners get lava
 BURNER_PUSH_MB = 250      -- lava pushed into each burner peripheral per round
-BOILER_SECONDS = 1        -- how often each boiler gets a burst of water
-BOILER_PUSH_MB = 1000     -- 900+ in one burst counts as full water (level 18)
 THRUSTER_RESERVE_MB = 2000 -- burners stop taking lava below this, so thrusters keep flying
 AUTO_UPDATE = true        -- install new versions from GitHub automatically, keeping these settings
 
@@ -49,7 +43,7 @@ end
 
 -- ============================================================ state
 
-local VERSION = "1.0.0"
+local VERSION = "1.1.0"
 local SETUP_FILE = "/lava_plant.cfg"
 local BATCH = 100 -- CC drops events past 256 queued, so never wait on more at once
 
@@ -63,7 +57,7 @@ local TANK_TYPES = {
   "create:fluid_tank", "createpropulsion:platinum_fluid_vessel", "create:hose_pulley",
 }
 
-local roles = { lava = nil, water = nil, boilers = {} }
+local roles = { lava = nil }
 local found = { basins = {}, burners = {}, generators = {}, thrusters = {} }
 
 local stats = {
@@ -72,7 +66,6 @@ local stats = {
   lavaStored = nil,
   thrusterLow = nil, thrusterBad = {}, thrusterFiring = false,
   burnersFed = 0, burnersFull = false,
-  boilerShort = {},
   lastError = nil,
 }
 
@@ -118,7 +111,6 @@ local function present(name)
 end
 
 local function lavaTank() return present(roles.lava) and roles.lava or nil end
-local function waterSource() return present(roles.water) and roles.water or nil end
 
 -- ============================================================ peripherals
 
@@ -168,7 +160,7 @@ end
 
 local function saveSetup()
   local f = fs.open(SETUP_FILE, "w")
-  f.write(textutils.serialize({ lava = roles.lava, water = roles.water, boilers = roles.boilers }))
+  f.write(textutils.serialize({ lava = roles.lava }))
   f.close()
 end
 
@@ -178,13 +170,11 @@ local function loadSetup()
     local data = textutils.unserialize(f.readAll())
     f.close()
     if type(data) == "table" then
-      roles.lava, roles.water, roles.boilers = data.lava, data.water, data.boilers or {}
+      roles.lava = data.lava
     end
   end
   -- names written at the top of the file win over the setup screen
   if LAVA_TANK then roles.lava = LAVA_TANK end
-  if WATER_SOURCE then roles.water = WATER_SOURCE end
-  if BOILERS then roles.boilers = BOILERS end
 end
 
 local function runSetup()
@@ -205,17 +195,12 @@ local function runSetup()
     print(i .. ") " .. name .. "  [" .. describeTank(name) .. "]")
   end
   print("")
-  print("For each, type L (lava tank), W (water")
-  print("source), B (boiler) or Enter to skip.")
-  local newRoles = { lava = nil, water = nil, boilers = {} }
-  for i, name in ipairs(tanks) do
-    write(i .. ") " .. name .. ": ")
-    local answer = (read() or ""):upper()
-    if answer == "L" then newRoles.lava = name
-    elseif answer == "W" then newRoles.water = name
-    elseif answer == "B" then table.insert(newRoles.boilers, name) end
+  local choice
+  while not choice do
+    write("Which number is the lava tank? ")
+    choice = tanks[tonumber(read() or "")]
   end
-  roles = newRoles
+  roles = { lava = choice }
   saveSetup()
   print("")
   print("Saved. Starting...")
@@ -223,7 +208,7 @@ local function runSetup()
 end
 
 local function needsSetup()
-  return roles.lava == nil and roles.water == nil and #roles.boilers == 0
+  return roles.lava == nil
 end
 
 -- ============================================================ jobs
@@ -310,27 +295,6 @@ local function fuelBurners()
   stats.burnersFed, stats.burnersFull = fed, full
 end
 
--- A boiler rates its water by the best 5-tick burst in the last 2.5 s,
--- so one 1000 mB push a second reads as 200 mB/t: water level 18.
-local function waterBoilers()
-  local src = waterSource()
-  if not src or #roles.boilers == 0 then
-    stats.boilerShort = {}
-    return
-  end
-  local short = {}
-  local jobs = {}
-  for _, b in ipairs(roles.boilers) do
-    jobs[#jobs + 1] = function()
-      local ok, moved = pcall(peripheral.call, src, "pushFluid", b, BOILER_PUSH_MB, WATER)
-      if not ok or type(moved) ~= "number" or moved < 900 then
-        short[#short + 1] = b .. " (" .. (ok and tostring(moved) or "error") .. " mB)"
-      end
-    end
-  end
-  runAll(jobs)
-  stats.boilerShort = short
-end
 
 -- ============================================================ screen
 
@@ -366,9 +330,6 @@ local function draw()
   end
   line("Burners " .. #found.burners ..
     (#found.burners > 0 and (stats.burnersFull and "   all full" or ("   taking lava: " .. stats.burnersFed)) or ""))
-  line("Boilers " .. #roles.boilers .. "   water: " .. (roles.water or "not set"),
-    (#roles.boilers > 0 and not waterSource()) and colours.red or colours.white)
-  for _, s in ipairs(stats.boilerShort) do line("  short: " .. s, colours.red) end
   if stats.lastError then
     line("")
     line("Error: " .. stats.lastError, colours.red)
@@ -592,8 +553,7 @@ while true do
     every(FARM_SECONDS, drainBasins),
     every(COBBLE_SECONDS, fillBasins),
     every(THRUSTER_SECONDS, fuelThrusters),
-    every(BURNER_SECONDS, fuelBurners),
-    every(BOILER_SECONDS, waterBoilers)
+    every(BURNER_SECONDS, fuelBurners)
   )
   if setupRequested then
     runSetup()

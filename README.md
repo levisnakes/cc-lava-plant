@@ -6,7 +6,6 @@ A ComputerCraft program that runs a whole lava setup from one computer:
 - drains lava from every **basin** (superheated mixers) into your lava tank
 - tops up every Create Propulsion **thruster** from the lava tank
 - feeds lava to every **Liquid Burner** (a modem on the end burner of a straight line feeds the whole line)
-- pushes water into each **steam boiler** in 1000 mB bursts, which keeps the boiler at water level 18
 
 ## Install
 
@@ -14,7 +13,7 @@ A ComputerCraft program that runs a whole lava setup from one computer:
 wget https://raw.githubusercontent.com/levisnakes/cc-lava-plant/main/lava_plant.lua startup.lua
 ```
 
-Put a wired modem on every basin, generator, thruster, end burner, the lava tank, the water source and each boiler, and join them with network cable. On first start the program lists your fluid tanks and asks which is the lava tank (L), the water source (W) and the boilers (B). Press **S** to run that setup again.
+Put a wired modem on every basin, generator, thruster, end burner and the lava tank, and join them with network cable. On first start the program lists your fluid tanks and asks which one is the lava tank. Press **S** to pick it again.
 
 ## Notes
 
