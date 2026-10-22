@@ -21,7 +21,7 @@ COBBLE_SECONDS = 3        -- how often basins are refilled with cobble
 THRUSTER_SECONDS = 0.25   -- how often thrusters are topped up
 BURNER_SECONDS = 2        -- how often burners get lava
 BURNER_PUSH_MB = 250      -- lava pushed into each burner peripheral per round
-THRUSTER_RESERVE_MB = 2000 -- burners stop taking lava below this, so thrusters keep flying
+BURNER_RESERVE_MB = 1000  -- while burners still want lava, thrusters leave this much in the tank
 AUTO_UPDATE = true        -- install new versions from GitHub automatically, keeping these settings
 
 -- Settings in /config.lua override the ones above. Use it for anything you
@@ -43,7 +43,7 @@ end
 
 -- ============================================================ state
 
-local VERSION = "1.1.1"
+local VERSION = "1.2.0"
 local SETUP_FILE = "/lava_plant.cfg"
 local BATCH = 100 -- CC drops events past 256 queued, so never wait on more at once
 
@@ -257,8 +257,14 @@ local function fillBasins()
 end
 
 -- Every thruster pulls lava from the lava tank until its tank is full.
+-- Burners come first: until they are all full, thrusters only take what is
+-- above BURNER_RESERVE_MB.
 local function fuelThrusters()
   local tank = lavaTank()
+  local spare = math.huge
+  if tank and #found.burners > 0 and not stats.burnersFull then
+    spare = math.max(0, (fluidAmount(tank, LAVA) or 0) - BURNER_RESERVE_MB)
+  end
   local low, bad, firing = nil, {}, false
   local jobs = {}
   for _, t in ipairs(found.thrusters) do
@@ -272,10 +278,12 @@ local function fuelThrusters()
         return
       end
       if not low or amount < low then low = amount end
-      local space = capacity - amount
-      if tank and space > 0 then
-        local ok, moved = pcall(peripheral.call, t, "pullFluid", tank, space, LAVA)
+      local want = math.min(capacity - amount, spare)
+      if tank and want > 0 then
+        spare = spare - want -- claimed before the call, so parallel jobs share it
+        local ok, moved = pcall(peripheral.call, t, "pullFluid", tank, want, LAVA)
         if ok and type(moved) == "number" then
+          spare = spare + (want - moved)
           addSample(stats.lavaOut, moved)
         elseif not ok then
           bad[#bad + 1] = t -- usually a modem that isn't on the intake end
@@ -292,8 +300,11 @@ end
 local function fuelBurners()
   local tank = lavaTank()
   if not tank or #found.burners == 0 then return end
-  local stored = fluidAmount(tank, LAVA) or 0
-  if #found.thrusters > 0 and stored < THRUSTER_RESERVE_MB then return end
+  -- an empty tank moves nothing, which says nothing about the burners
+  if (fluidAmount(tank, LAVA) or 0) == 0 then
+    stats.burnersFed, stats.burnersFull = 0, false
+    return
+  end
   local fed, full = 0, true
   local jobs = {}
   for _, b in ipairs(found.burners) do

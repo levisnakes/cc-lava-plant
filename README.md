@@ -18,6 +18,6 @@ Put a wired modem on every basin, generator, thruster, end burner and the lava t
 ## Notes
 
 - Thruster modems must be on the intake end. On a 3x3x3 thruster that means one of the 9 intake-layer blocks.
-- Burners stop taking lava when the lava tank drops below `THRUSTER_RESERVE_MB`, so thrusters get fuel first.
+- Burners get lava first. Until every burner is full, thrusters leave `BURNER_RESERVE_MB` in the tank for them.
 - The program only updates itself while no thruster is firing.
 - Settings are at the top of the file, or in `/config.lua`.
